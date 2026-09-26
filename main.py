@@ -5,6 +5,8 @@ from warehouse_core import (
     generate_pickup_points,
     get_pickable_cells,
     build_distance_matrix,
+    build_route_data,
+    reconstruct_full_path,
     print_distance_matrix,
 )
 
@@ -87,14 +89,44 @@ def main():
     # GRASP
     # -------------------------
 
-    # from grasp import run_grasp
-    #
-    # grasp_result = run_grasp(
-    #     distance_matrix
-    # )
-    #
-    # print("\n===== GRASP =====")
-    # print(grasp_result)
+    from grasp import run_grasp
+
+    route_data = build_route_data(
+        pickup_points
+    )
+
+    grasp_result = run_grasp(
+        route_data
+    )
+
+    path, steps, standing_cells = reconstruct_full_path(
+        grasp_result["best_order"],
+        pickup_points,
+        route_data
+    )
+
+    print("\n===== GRASP =====")
+
+    print(
+        "ลำดับการหยิบ:",
+        " -> ".join(
+            f"P{i + 1}"
+            for i in grasp_result["best_order"]
+        )
+    )
+
+    for idx, cell in zip(
+        grasp_result["best_order"],
+        standing_cells
+    ):
+        print(
+            f"    P{idx + 1} {pickup_points[idx]} ยืนหยิบที่ {cell}"
+        )
+
+    print(f"จำนวนก้าวรวม: {steps}")
+    print(f"Runtime: {grasp_result['runtime']:.4f} s")
+    print(f"เส้นทาง ({len(path)} ช่อง):")
+    print(" -> ".join(str(p) for p in path))
 
 
     # -------------------------
