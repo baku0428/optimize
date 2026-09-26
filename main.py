@@ -115,14 +115,14 @@ def main():
     # PSO
     # -------------------------
 
-    # from pso import run_pso
-    #
-    # pso_result = run_pso(
-    #     distance_matrix
-    # )
-    #
-    # print("\n===== PSO =====")
-    # print(pso_result)
+    from pso import run_pso
+
+    pso_result = run_pso(
+        distance_matrix
+    )
+
+    print("\n===== PSO =====")
+    print(pso_result)
 
 
 if __name__ == "__main__":
