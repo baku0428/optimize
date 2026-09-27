@@ -1,6 +1,7 @@
 """
 abc_optimizer.py
-รับผิดชอบโดย: คนที่ 2 (Artificial Bee Colony + เก็บผลการทดลอง)
+Artificial Bee Colony (ABC)
+Warehouse Picking Route Optimization
 """
 
 import time
@@ -8,7 +9,8 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 
-# นำเข้าฟังก์ชันจาก warehouse_core โดยไม่ดัดแปลงไฟล์ core
+from matplotlib.colors import ListedColormap
+
 from warehouse_core import (
     warehouse,
     entrance,
@@ -23,52 +25,108 @@ from warehouse_core import (
 
 
 # =========================================================
-# 1) ฟังก์ชันคำนวณและตัวดำเนินการของ ABC
+# 1) Calculate Distance
 # =========================================================
 
 def calculate_distance(order, distance_matrix):
-    """คำนวณระยะทางรวมจาก Entrance -> Pickup ตามลำดับ -> Exit"""
-    return calculate_order_distance(order, distance_matrix)
+    """
+    คำนวณระยะทางรวม:
+    Entrance -> Pickup ตามลำดับ -> Exit
+    """
 
+    return calculate_order_distance(
+        order,
+        distance_matrix
+    )
+
+
+# =========================================================
+# 2) Create Initial Solution
+# =========================================================
 
 def create_solution(n):
-    """สร้าง Permutation เริ่มต้นแบบสุ่ม (Index 0 ถึง n-1)"""
+    """
+    สร้างลำดับ Pickup แบบสุ่ม
+
+    เช่น:
+    [2, 0, 4, 1, 3]
+    """
+
     solution = list(range(n))
+
     random.shuffle(solution)
+
     return solution
 
 
+# =========================================================
+# 3) Create Neighbor Solution
+# =========================================================
+
 def create_neighbor(solution):
     """
-    Neighborhood Operator ผสมผสาน:
-    - Inversion (2-Opt) เพื่อคลายเส้นทางที่ตัดกัน (ความน่าจะเป็น 60%)
-    - Insertion เพื่อแทรกจุดหยิบสินค้าใหม่ (ความน่าจะเป็น 25%)
-    - Swap เพื่อสลับจุดหยิบ 2 จุด (ความน่าจะเป็น 15%)
+    Neighborhood Operators
+
+    60% = Inversion (2-Opt)
+    25% = Insertion
+    15% = Swap
     """
+
     neighbor = solution.copy()
+
     n = len(neighbor)
+
     if n <= 2:
         return neighbor
 
     r = random.random()
-    i, j = sorted(random.sample(range(n), 2))
+
+    i, j = sorted(
+        random.sample(
+            range(n),
+            2
+        )
+    )
+
+    # -----------------------------------------------------
+    # Inversion / 2-Opt
+    # -----------------------------------------------------
 
     if r < 0.60:
-        # Inversion (2-Opt)
-        neighbor[i : j + 1] = reversed(neighbor[i : j + 1])
+
+        neighbor[i:j + 1] = reversed(
+            neighbor[i:j + 1]
+        )
+
+    # -----------------------------------------------------
+    # Insertion
+    # -----------------------------------------------------
+
     elif r < 0.85:
-        # Insertion
-        val = neighbor.pop(j)
-        neighbor.insert(i, val)
+
+        value = neighbor.pop(j)
+
+        neighbor.insert(
+            i,
+            value
+        )
+
+    # -----------------------------------------------------
+    # Swap
+    # -----------------------------------------------------
+
     else:
-        # Swap
-        neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
+
+        neighbor[i], neighbor[j] = (
+            neighbor[j],
+            neighbor[i]
+        )
 
     return neighbor
 
 
 # =========================================================
-# 2) Main ABC Algorithm (เรียกจาก main.py ได้โดยตรง)
+# 4) Artificial Bee Colony
 # =========================================================
 
 def artificial_bee_colony(
@@ -79,221 +137,753 @@ def artificial_bee_colony(
     seed=42,
 ):
     """
-    อัลกอริทึม Artificial Bee Colony สำหรับปัญหา Open TSP (Entrance -> Pickups -> Exit)
-    
-    คืนค่า dict ที่มี:
-      - best_order: ลำดับ index (0-based)
-      - best_distance: ระยะทางรวมที่สั้นที่สุด
-      - runtime: เวลาในการประมวลผล (วินาที)
-      - history: บันทึก best distance ในแต่ละรอบเพื่อดู Convergence
+    Artificial Bee Colony สำหรับ Open TSP
+
+    Entrance
+        ->
+    Pickup ทุกจุด
+        ->
+    Exit
+
+    Return:
+        best_order
+        best_distance
+        runtime
+        history
     """
+
     random.seed(seed)
     np.random.seed(seed)
+
     start_time = time.perf_counter()
 
+    # จำนวน Pickup
     n = len(distance_matrix) - 2
 
-    # 1. Initial Population
-    population = [create_solution(n) for _ in range(num_bees)]
-    distances = [calculate_distance(sol, distance_matrix) for sol in population]
+    # =====================================================
+    # Initial Population
+    # =====================================================
+
+    population = [
+        create_solution(n)
+        for _ in range(num_bees)
+    ]
+
+    distances = [
+        calculate_distance(
+            solution,
+            distance_matrix
+        )
+        for solution in population
+    ]
+
     trials = [0] * num_bees
 
-    # หาคำตอบที่ดีที่สุดในชุดเริ่มต้น
-    best_idx = min(range(num_bees), key=lambda i: distances[i])
-    best_solution = population[best_idx].copy()
-    best_distance = distances[best_idx]
+    # =====================================================
+    # Initial Best
+    # =====================================================
 
-    history = [best_distance]
+    best_index = min(
+        range(num_bees),
+        key=lambda i: distances[i]
+    )
 
-    # Iteration Loop
+    best_solution = population[
+        best_index
+    ].copy()
+
+    best_distance = distances[
+        best_index
+    ]
+
+    history = [
+        best_distance
+    ]
+
+    # =====================================================
+    # ABC Iterations
+    # =====================================================
+
     for _ in range(max_iterations):
-        # -------------------------------------------------
-        # Phase 1: Employed Bee
-        # -------------------------------------------------
-        for i in range(num_bees):
-            neighbor = create_neighbor(population[i])
-            neighbor_dist = calculate_distance(neighbor, distance_matrix)
 
-            if neighbor_dist < distances[i]:
+        # =================================================
+        # Phase 1: Employed Bee
+        # =================================================
+
+        for i in range(num_bees):
+
+            neighbor = create_neighbor(
+                population[i]
+            )
+
+            neighbor_distance = calculate_distance(
+                neighbor,
+                distance_matrix
+            )
+
+            if neighbor_distance < distances[i]:
+
                 population[i] = neighbor
-                distances[i] = neighbor_dist
+
+                distances[i] = neighbor_distance
+
                 trials[i] = 0
+
             else:
+
                 trials[i] += 1
 
-        # -------------------------------------------------
+        # =================================================
         # Phase 2: Onlooker Bee
-        # -------------------------------------------------
-        # คำนวณความน่าจะเป็นตาม Fitness (ระยะทางยิ่งน้อย ความน่าจะเป็นยิ่งสูง)
-        max_d = max(distances)
-        min_d = min(distances)
-        if max_d == min_d:
-            fitness = [1.0] * num_bees
-        else:
-            # ใช้ min-max scaling เพื่อกระจายความน่าจะเป็น
-            fitness = [(max_d - d) + (max_d - min_d) * 0.1 for d in distances]
+        # =================================================
 
-        total_fitness = sum(fitness)
-        probabilities = [f / total_fitness for f in fitness]
+        max_distance = max(distances)
+        min_distance = min(distances)
+
+        if max_distance == min_distance:
+
+            fitness = [
+                1.0
+            ] * num_bees
+
+        else:
+
+            fitness = [
+                (
+                    max_distance - distance
+                )
+                +
+                (
+                    max_distance - min_distance
+                ) * 0.1
+
+                for distance in distances
+            ]
+
+        total_fitness = sum(
+            fitness
+        )
+
+        probabilities = [
+            value / total_fitness
+            for value in fitness
+        ]
 
         for _ in range(num_bees):
-            # สุ่มเลือก Food Source ตามค่าน้ำหนัก Fitness
-            chosen_idx = random.choices(
-                range(num_bees), weights=probabilities, k=1
+
+            chosen_index = random.choices(
+                range(num_bees),
+                weights=probabilities,
+                k=1
             )[0]
-            neighbor = create_neighbor(population[chosen_idx])
-            neighbor_dist = calculate_distance(neighbor, distance_matrix)
 
-            if neighbor_dist < distances[chosen_idx]:
-                population[chosen_idx] = neighbor
-                distances[chosen_idx] = neighbor_dist
-                trials[chosen_idx] = 0
+            neighbor = create_neighbor(
+                population[chosen_index]
+            )
+
+            neighbor_distance = calculate_distance(
+                neighbor,
+                distance_matrix
+            )
+
+            if (
+                neighbor_distance
+                <
+                distances[chosen_index]
+            ):
+
+                population[
+                    chosen_index
+                ] = neighbor
+
+                distances[
+                    chosen_index
+                ] = neighbor_distance
+
+                trials[
+                    chosen_index
+                ] = 0
+
             else:
-                trials[chosen_idx] += 1
 
-        # -------------------------------------------------
+                trials[
+                    chosen_index
+                ] += 1
+
+        # =================================================
         # Phase 3: Scout Bee
-        # -------------------------------------------------
+        # =================================================
+
         for i in range(num_bees):
+
             if trials[i] >= limit:
-                population[i] = create_solution(n)
-                distances[i] = calculate_distance(population[i], distance_matrix)
+
+                population[i] = (
+                    create_solution(n)
+                )
+
+                distances[i] = (
+                    calculate_distance(
+                        population[i],
+                        distance_matrix
+                    )
+                )
+
                 trials[i] = 0
 
-        # Update Best Solution
-        current_best_idx = min(range(num_bees), key=lambda i: distances[i])
-        if distances[current_best_idx] < best_distance:
-            best_distance = distances[current_best_idx]
-            best_solution = population[current_best_idx].copy()
+        # =================================================
+        # Update Global Best
+        # =================================================
 
-        history.append(best_distance)
+        current_best_index = min(
+            range(num_bees),
+            key=lambda i: distances[i]
+        )
 
-    runtime = time.perf_counter() - start_time
+        if (
+            distances[current_best_index]
+            <
+            best_distance
+        ):
+
+            best_distance = distances[
+                current_best_index
+            ]
+
+            best_solution = population[
+                current_best_index
+            ].copy()
+
+        history.append(
+            best_distance
+        )
+
+    # =====================================================
+    # Runtime
+    # =====================================================
+
+    runtime = (
+        time.perf_counter()
+        -
+        start_time
+    )
 
     return {
-        "best_order": best_solution,
-        "best_distance": int(best_distance),
-        "runtime": runtime,
-        "history": history,
+
+        "best_order":
+            best_solution,
+
+        "best_distance":
+            int(best_distance),
+
+        "runtime":
+            runtime,
+
+        "history":
+            history,
     }
 
 
 # =========================================================
-# 3) ฟังก์ชันถอดรหัสเส้นทางเดินจริง (Full Walkway Path)
+# 5) Reconstruct Full Walking Path
 # =========================================================
 
-def reconstruct_full_path(order, pickup_points):
+def reconstruct_full_path(
+    order,
+    pickup_points
+):
     """
-    แกะรอยพิกัดทางเดินก้าวต่อก้าว:
-    Entrance -> ช่องข้าง Shelf ของสินค้าตัวแรก -> ... -> Exit
+    สร้างเส้นทางเดินจริง
+
+    Entrance
+        ->
+    Pickup ทุกจุด
+        ->
+    Exit
     """
+
     full_path = []
-    current_pos = entrance
 
-    for pickup_idx in order:
-        shelf_pos = pickup_points[pickup_idx]
-        target_cells = get_pickable_cells(shelf_pos)
+    current_position = entrance
 
-        # หาเส้นทางที่สั้นที่สุดจากจุดปัจจุบันไปยังช่องยืนหยิบของ Shelf นั้น
-        _, seg_path, best_goal = shortest_path_to_any(current_pos, target_cells)
+    # =====================================================
+    # Entrance -> Pickups
+    # =====================================================
+
+    for pickup_index in order:
+
+        shelf_position = pickup_points[
+            pickup_index
+        ]
+
+        target_cells = get_pickable_cells(
+            shelf_position
+        )
+
+        _, segment_path, best_goal = (
+            shortest_path_to_any(
+                current_position,
+                target_cells
+            )
+        )
 
         if not full_path:
-            full_path.extend(seg_path)
+
+            full_path.extend(
+                segment_path
+            )
+
         else:
-            full_path.extend(seg_path[1:])  # ตัดจุดเชื่อมต่อซ้ำ
 
-        current_pos = best_goal
+            full_path.extend(
+                segment_path[1:]
+            )
 
-    # จากจุดหยิบสุดท้ายไปยังทางออก (exit_point)
-    _, exit_seg = bfs(current_pos, exit_point)
-    if exit_seg:
-        full_path.extend(exit_seg[1:])
+        current_position = best_goal
+
+    # =====================================================
+    # Last Pickup -> Exit
+    # =====================================================
+
+    _, exit_path = bfs(
+        current_position,
+        exit_point
+    )
+
+    if exit_path:
+
+        full_path.extend(
+            exit_path[1:]
+        )
 
     return full_path
 
 
 # =========================================================
-# 4) ระบบเก็บผลการทดลอง (Experiment Suite) สำหรับทำรายงาน
+# 6) Plot ABC Route
 # =========================================================
 
-def run_experiment():
+def plot_abc_route(
+    pickup_points,
+    full_path,
+    best_distance,
+    save_path="abc_route.png"
+):
     """
-    การทดลองตามข้อกำหนดข้อ 7.2.4 ของรายงาน:
-    เปรียบเทียบขนาดจำนวนจุด Pickup N = [10, 20, 30, 50]
-    เก็บสถิติระยะทาง เวลาที่ใช้ และพลอตกราฟ Convergence
+    วาดเส้นทาง ABC ลงบนแผนที่โกดัง
     """
-    print("\n" + "=" * 65)
-    print("        ABC EXPERIMENT & BENCHMARKING SUITE")
-    print("=" * 65)
 
-    test_n = [10, 20, 30, 50]
-    results = {}
+    rows, cols = warehouse.shape
 
-    plt.figure(figsize=(10, 6))
+    # =====================================================
+    # Warehouse Colors
+    # =====================================================
 
-    for n in test_n:
-        print(f"\n[+] กำลังทดสอบ N = {n} จุด...")
-        pts = generate_pickup_points(n=n, seed=20)
-        dist_mat = build_distance_matrix(pts)
+    warehouse_cmap = ListedColormap([
+        "#FFFFFF",      # Walkway
+        "#808080",      # Shelf
+    ])
 
-        # รัน ABC ด้วยการตั้งค่าตามสเกล
-        max_iter = 600 if n >= 30 else 400
-        res = artificial_bee_colony(
-            dist_mat,
-            num_bees=30,
-            max_iterations=max_iter,
-            limit=50,
-            seed=42,
+    plt.figure(
+        figsize=(10, 10)
+    )
+
+    plt.imshow(
+        warehouse,
+        cmap=warehouse_cmap,
+        origin="upper",
+        interpolation="nearest"
+    )
+
+    # =====================================================
+    # ABC Walking Route
+    # =====================================================
+
+    if full_path:
+
+        path_rows = [
+            int(point[0])
+            for point in full_path
+        ]
+
+        path_cols = [
+            int(point[1])
+            for point in full_path
+        ]
+
+        plt.plot(
+            path_cols,
+            path_rows,
+            linewidth=2.5,
+            zorder=3,
+            label="ABC Route"
         )
 
-        results[n] = res
-        print(f"    - ระยะทางที่ดีที่สุด (ก้าว): {res['best_distance']}")
-        print(f"    - เวลาประมวลผล (วินาที): {res['runtime']:.4f} s")
+    # =====================================================
+    # Entrance
+    # =====================================================
 
-        # พลอตกราฟ Convergence
-        plt.plot(res["history"], label=f"N = {n} (Best: {res['best_distance']})")
+    plt.scatter(
+        entrance[1],
+        entrance[0],
+        s=380,
+        marker="o",
+        zorder=6
+    )
 
-    # สรุปผลเป็นตารางสำหรับนำไปใส่รายงาน
-    print("\n" + "=" * 65)
-    print("สรุปผลการทดลอง ABC สำหรับรายงาน (ข้อ 7.2.3 และ 7.2.4)")
-    print("=" * 65)
-    print(f"{'N Points':<10} | {'Best Distance (Steps)':<25} | {'Runtime (Seconds)':<18}")
-    print("-" * 65)
-    for n in test_n:
-        print(
-            f"{n:<10} | {results[n]['best_distance']:<25} | {results[n]['runtime']:<18.4f}"
+    plt.text(
+        entrance[1],
+        entrance[0],
+        "IN",
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=9,
+        fontweight="bold",
+        zorder=7
+    )
+
+    # =====================================================
+    # Exit
+    # =====================================================
+
+    plt.scatter(
+        exit_point[1],
+        exit_point[0],
+        s=380,
+        marker="o",
+        zorder=6
+    )
+
+    plt.text(
+        exit_point[1],
+        exit_point[0],
+        "OUT",
+        ha="center",
+        va="center",
+        color="white",
+        fontsize=8,
+        fontweight="bold",
+        zorder=7
+    )
+
+    # =====================================================
+    # Pickup Points
+    # =====================================================
+
+    for index, point in enumerate(
+        pickup_points,
+        start=1
+    ):
+
+        row = int(point[0])
+        col = int(point[1])
+
+        plt.scatter(
+            col,
+            row,
+            s=400,
+            marker="s",
+            edgecolors="black",
+            linewidths=1.5,
+            zorder=6
         )
-    print("=" * 65)
 
-    # แสดงกราฟ Convergence
-    plt.title("ABC Convergence Curve on Different Problem Scales", fontsize=14, fontweight="bold")
-    plt.xlabel("Iteration", fontsize=12)
-    plt.ylabel("Best Total Distance (Steps)", fontsize=12)
-    plt.grid(True, linestyle="--", alpha=0.6)
-    plt.legend()
+        plt.text(
+            col,
+            row,
+            str(index),
+            ha="center",
+            va="center",
+            fontsize=10,
+            fontweight="bold",
+            zorder=7
+        )
+
+    # =====================================================
+    # Axis
+    # =====================================================
+
+    plt.xticks(
+        np.arange(cols)
+    )
+
+    plt.yticks(
+        np.arange(rows)
+    )
+
+    plt.xlim(
+        -0.5,
+        cols - 0.5
+    )
+
+    plt.ylim(
+        rows - 0.5,
+        -0.5
+    )
+
+    # =====================================================
+    # Grid
+    # =====================================================
+
+    plt.xticks(
+        np.arange(
+            -0.5,
+            cols,
+            1
+        ),
+        minor=True
+    )
+
+    plt.yticks(
+        np.arange(
+            -0.5,
+            rows,
+            1
+        ),
+        minor=True
+    )
+
+    plt.grid(
+        which="minor",
+        linewidth=0.4,
+        alpha=0.3
+    )
+
+    plt.tick_params(
+        which="minor",
+        bottom=False,
+        left=False
+    )
+
+    # =====================================================
+    # Title
+    # =====================================================
+
+    plt.title(
+        (
+            f"ABC Route (N={len(pickup_points)}) "
+            f"- {best_distance} steps"
+        ),
+        fontsize=16,
+        fontweight="bold"
+    )
+
+    plt.xlabel(
+        "Column"
+    )
+
+    plt.ylabel(
+        "Row"
+    )
+
+    # =====================================================
+    # Save
+    # =====================================================
+
     plt.tight_layout()
+
+    plt.savefig(
+        save_path,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    print(
+        f"\nABC route image saved: {save_path}"
+    )
+
     plt.show()
 
 
 # =========================================================
-# Execution Point
+# 7) ABC Experiment
 # =========================================================
 
-if __name__ == "__main__":
-    # 1. ทดสอบการรันค่าเริ่มต้น (N = 10 ตามโจทย์)
-    pts_10 = generate_pickup_points(n=10, seed=20)
-    mat_10 = build_distance_matrix(pts_10)
+def run_experiment():
+    """
+    ทดลอง:
+    N = 10
+    N = 20
+    N = 30
+    N = 50
 
-    res_10 = artificial_bee_colony(mat_10, seed=42)
-    order_1based = [x + 1 for x in res_10["best_order"]]
-    full_path = reconstruct_full_path(res_10["best_order"], pts_10)
+    แสดง:
+    - Best Distance
+    - Runtime
+    - Convergence
+    """
 
-    print("\n=== ผลลัพธ์ ABC เบื้องต้น (N=10) ===")
-    print("5.1 ลำดับการหยิบสินค้า:", order_1based)
-    print(f"5.3 ระยะทางรวมน้อยที่สุด: {res_10['best_distance']} ก้าว")
-    print(f"    เวลาประมวลผล: {res_10['runtime']:.4f} วินาที")
-    print(f"5.2 เส้นทางเดินจริงทั้งหมด ({len(full_path)} ก้าว):")
-    print(" -> ".join([str(pos) for pos in full_path[:10]]) + " -> ... -> " + str(full_path[-1]))
+    print(
+        "\n"
+        +
+        "=" * 65
+    )
 
-    # 2. ทำการรัน Experiment Suite N = [10, 20, 30, 50]
-    run_experiment()
+    print(
+        "        ABC EXPERIMENT & BENCHMARKING SUITE"
+    )
+
+    print(
+        "=" * 65
+    )
+
+    test_n = [
+        10,
+        20,
+        30,
+        50
+    ]
+
+    results = {}
+
+    plt.figure(
+        figsize=(10, 6)
+    )
+
+    # =====================================================
+    # Run Each Problem Size
+    # =====================================================
+
+    for n in test_n:
+
+        print(
+            f"\n[+] Testing N = {n} pickup points..."
+        )
+
+        pickup_points = generate_pickup_points(
+            n=n,
+            seed=20
+        )
+
+        distance_matrix = build_distance_matrix(
+            pickup_points
+        )
+
+        # N >= 30 ใช้ iteration มากขึ้น
+        if n >= 30:
+
+            max_iterations = 600
+
+        else:
+
+            max_iterations = 400
+
+        result = artificial_bee_colony(
+            distance_matrix=distance_matrix,
+            num_bees=30,
+            max_iterations=max_iterations,
+            limit=50,
+            seed=42,
+        )
+
+        results[n] = result
+
+        print(
+            "    Best Distance:",
+            result["best_distance"],
+            "steps"
+        )
+
+        print(
+            "    Runtime:",
+            f'{result["runtime"]:.4f}',
+            "seconds"
+        )
+
+        # =================================================
+        # Convergence
+        # =================================================
+
+        plt.plot(
+            result["history"],
+            label=(
+                f"N = {n} "
+                f"(Best: {result['best_distance']})"
+            )
+        )
+
+    # =====================================================
+    # Result Table
+    # =====================================================
+
+    print(
+        "\n"
+        +
+        "=" * 65
+    )
+
+    print(
+        "ABC EXPERIMENT RESULTS"
+    )
+
+    print(
+        "=" * 65
+    )
+
+    print(
+        f"{'N Points':<10} | "
+        f"{'Best Distance':<20} | "
+        f"{'Runtime (Seconds)':<18}"
+    )
+
+    print(
+        "-" * 65
+    )
+
+    for n in test_n:
+
+        print(
+            f"{n:<10} | "
+            f"{results[n]['best_distance']:<20} | "
+            f"{results[n]['runtime']:<18.4f}"
+        )
+
+    print(
+        "=" * 65
+    )
+
+    # =====================================================
+    # Convergence Graph
+    # =====================================================
+
+    plt.title(
+        "ABC Convergence Curve on Different Problem Scales",
+        fontsize=14,
+        fontweight="bold"
+    )
+
+    plt.xlabel(
+        "Iteration",
+        fontsize=12
+    )
+
+    plt.ylabel(
+        "Best Total Distance (Steps)",
+        fontsize=12
+    )
+
+    plt.grid(
+        True,
+        linestyle="--",
+        alpha=0.6
+    )
+
+    plt.legend()
+
+    plt.tight_layout()
+
+    plt.savefig(
+        "abc_convergence.png",
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    print(
+        "\nABC convergence image saved: "
+        "abc_convergence.png"
+    )
+
+    plt.show()
+
+    return results
