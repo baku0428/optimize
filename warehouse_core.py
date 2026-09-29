@@ -14,7 +14,7 @@ warehouse = np.array([
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
-    [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0],
+    [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
     [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
     [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
     [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0],
@@ -122,8 +122,9 @@ def generate_pickup_points(n, seed=20):
         replace=False
     )
 
+    # แปลงเป็น int ธรรมดา (ไม่ให้แสดงเป็น np.int64)
     return [
-        shelf_positions[index]
+        (int(shelf_positions[index][0]), int(shelf_positions[index][1]))
         for index in selected_indices
     ]
 
@@ -152,7 +153,9 @@ def get_pickable_cells(pickup_point):
         )
 
         if is_walkway(neighbor):
-            cells.append(neighbor)
+            cells.append(
+                (int(neighbor[0]), int(neighbor[1]))
+            )
 
     return cells
 
@@ -290,13 +293,65 @@ def pickup_to_pickup_distance(
 
 
 # =========================================================
-# 9) Build Distance Matrix
+# 9) BFS จากหลายจุดเริ่มพร้อมกัน (Multi-source BFS)
+#
+# คืนระยะทางจาก "จุดเริ่มที่ใกล้ที่สุด" ไปยังทุกช่องทางเดิน
+# ใช้สร้าง Distance Matrix ได้เร็วกว่าการเรียก bfs() ทีละคู่มาก
+# (BFS 1 รอบต่อ 1 จุดหยิบ แทนที่จะเป็นหลายรอบต่อ 1 คู่)
+# =========================================================
+
+def bfs_distance_map(sources):
+
+    distance_map = {}
+    queue = deque()
+
+    for source in sources:
+
+        if is_walkway(source) and source not in distance_map:
+            distance_map[source] = 0
+            queue.append(source)
+
+    while queue:
+
+        current = queue.popleft()
+        row, col = current
+
+        for dr, dc in MOVEMENTS:
+
+            neighbor = (
+                row + dr,
+                col + dc
+            )
+
+            if (
+                is_walkway(neighbor)
+                and neighbor not in distance_map
+            ):
+                distance_map[neighbor] = distance_map[current] + 1
+                queue.append(neighbor)
+
+    return distance_map
+
+
+def min_distance_to(distance_map, cells):
+
+    return min(
+        (distance_map.get(cell, float("inf")) for cell in cells),
+        default=float("inf")
+    )
+
+
+# =========================================================
+# 10) Build Distance Matrix
 #
 # Index:
 #
 # 0       = Entrance
 # 1..n    = Pickup
 # n + 1   = Exit
+#
+# ระยะทาง Pickup A -> Pickup B
+#   = ระยะสั้นสุดจากช่องยืนใดๆ ของ A ไปช่องยืนใดๆ ของ B
 # =========================================================
 
 def build_distance_matrix(pickup_points):
@@ -312,90 +367,176 @@ def build_distance_matrix(pickup_points):
 
     np.fill_diagonal(matrix, 0)
 
-    # -----------------------------------------------------
-    # Entrance <-> Pickup
-    # -----------------------------------------------------
-
-    for i, pickup in enumerate(
-        pickup_points,
-        start=1
-    ):
-
-        pickup_cells = get_pickable_cells(
-            pickup
-        )
-
-        distance, _, _ = shortest_path_to_any(
-            entrance,
-            pickup_cells
-        )
-
-        matrix[0][i] = distance
-        matrix[i][0] = distance
-
-    # -----------------------------------------------------
-    # Pickup <-> Pickup
-    # -----------------------------------------------------
-
-    for i in range(n):
-
-        for j in range(i + 1, n):
-
-            distance = pickup_to_pickup_distance(
-                pickup_points[i],
-                pickup_points[j]
-            )
-
-            matrix[i + 1][j + 1] = distance
-            matrix[j + 1][i + 1] = distance
-
-    # -----------------------------------------------------
-    # Pickup <-> Exit
-    # -----------------------------------------------------
-
-    for i, pickup in enumerate(
-        pickup_points,
-        start=1
-    ):
-
-        pickup_cells = get_pickable_cells(
-            pickup
-        )
-
-        best_distance = float("inf")
-
-        for cell in pickup_cells:
-
-            distance, _ = bfs(
-                cell,
-                exit_point
-            )
-
-            best_distance = min(
-                best_distance,
-                distance
-            )
-
-        matrix[i][n + 1] = best_distance
-        matrix[n + 1][i] = best_distance
-
-    # -----------------------------------------------------
-    # Entrance -> Exit
-    # -----------------------------------------------------
-
-    distance, _ = bfs(
-        entrance,
-        exit_point
+    # ช่องยืนของแต่ละโหนด: Entrance, Pickup 1..n, Exit
+    node_cells = (
+        [[entrance]]
+        + [get_pickable_cells(p) for p in pickup_points]
+        + [[exit_point]]
     )
 
-    matrix[0][n + 1] = distance
-    matrix[n + 1][0] = distance
+    for i in range(n + 2):
+
+        distance_map = bfs_distance_map(
+            node_cells[i]
+        )
+
+        for j in range(i + 1, n + 2):
+
+            distance = min_distance_to(
+                distance_map,
+                node_cells[j]
+            )
+
+            matrix[i][j] = distance
+            matrix[j][i] = distance
 
     return matrix
 
 
 # =========================================================
-# 10) คำนวณ Distance จาก Pickup Order
+# 11) ระยะเดินจริง (ใช้ร่วมกันทุก Algorithm)
+#
+# ข้อจำกัดของ Distance Matrix ข้างบน:
+#   มองแต่ละ Pickup เป็น 1 โหนด แล้วใช้ "คู่ช่องยืนที่ใกล้ที่สุด" ของแต่ละคู่แยกกัน
+#   ถ้าชั้นวางมีช่องยืน 2 ฝั่ง (เช่น ซ้าย/ขวาของชั้น) matrix จะยอมให้
+#   "เดินเข้าฝั่งซ้าย แล้วออกฝั่งขวา" ได้ฟรี = เหมือนเดินทะลุชั้นวาง
+#   -> ระยะตาม matrix ต่ำกว่าความจริง และยิ่งจุดเยอะยิ่งคลาดเคลื่อนมาก
+#
+# ของจริง: หยิบ Pickup แต่ละจุดต้องยืนที่ "ช่องเดียว" (เข้า-ออกช่องเดียวกัน)
+# evaluate_order() ใช้ Dynamic Programming เลือกช่องยืนของทุกจุด
+# ให้ระยะรวมสั้นที่สุดภายใต้ลำดับที่กำหนด = จำนวนก้าวเดินจริง
+# (ใช้เป็น fitness ได้เลย: เร็วเพราะ BFS ถูกคำนวณไว้ล่วงหน้าใน build_route_data)
+# =========================================================
+
+def build_route_data(pickup_points):
+    """
+    เตรียมข้อมูลสำหรับคำนวณระยะเดินจริง
+
+    return dict:
+        pickup_points : จุดหยิบ
+        node_cells    : ช่องยืนของแต่ละโหนด [Entrance, P1..Pn, Exit]
+        node_cell_idx : index ของช่องยืนใน cell_dist
+        cells         : รายการช่องยืนทั้งหมด (ไม่ซ้ำ)
+        cell_dist     : ระยะ BFS ระหว่างช่องยืนทุกคู่ (numpy array)
+        matrix        : Distance Matrix ระดับ Pickup (เหมือน build_distance_matrix)
+    """
+
+    validate_points(pickup_points)
+
+    node_cells = (
+        [[entrance]]
+        + [get_pickable_cells(p) for p in pickup_points]
+        + [[exit_point]]
+    )
+
+    cells = list(dict.fromkeys(
+        cell for group in node_cells for cell in group
+    ))
+
+    index = {cell: i for i, cell in enumerate(cells)}
+
+    cell_dist = np.full((len(cells), len(cells)), np.inf)
+
+    for i, cell in enumerate(cells):
+
+        distance_map = bfs_distance_map([cell])
+
+        for j, other in enumerate(cells):
+            cell_dist[i][j] = distance_map.get(other, np.inf)
+
+    node_cell_idx = [
+        [index[cell] for cell in group]
+        for group in node_cells
+    ]
+
+    size = len(node_cells)
+    matrix = np.zeros((size, size))
+
+    for i in range(size):
+        for j in range(size):
+            matrix[i][j] = cell_dist[
+                np.ix_(node_cell_idx[i], node_cell_idx[j])
+            ].min()
+
+    return {
+        "pickup_points": list(pickup_points),
+        "node_cells": node_cells,
+        "node_cell_idx": node_cell_idx,
+        "cells": cells,
+        "cell_dist": cell_dist,
+        "matrix": matrix,
+    }
+
+
+def evaluate_order(order, route_data):
+    """
+    ระยะเดินจริงของลำดับการหยิบ (order = index 0..n-1)
+
+    return: (steps, standing_cells)
+        steps          = จำนวนก้าวรวมจริง Entrance -> ... -> Exit
+        standing_cells = ช่องที่ยืนหยิบของแต่ละจุด เรียงตาม order
+    """
+
+    C = route_data["cell_dist"]
+    groups = route_data["node_cell_idx"]
+
+    layers = (
+        [groups[0]]
+        + [groups[i + 1] for i in order]
+        + [groups[-1]]
+    )
+
+    # cost[k] = ระยะสั้นสุดจาก Entrance มาถึงช่องยืนที่ k ของชั้นปัจจุบัน
+    cost = np.zeros(1)
+    back = []
+
+    for prev, cur in zip(layers, layers[1:]):
+
+        total = cost[:, None] + C[np.ix_(prev, cur)]
+        back.append(total.argmin(axis=0))
+        cost = total.min(axis=0)
+
+    # ย้อนกลับหาช่องยืนที่เลือก
+    k = 0
+    chosen = []
+
+    for layer, parent in zip(reversed(layers[:-1]), reversed(back)):
+        k = parent[k]
+        chosen.append(route_data["cells"][layer[k]])
+
+    chosen.reverse()
+
+    return int(cost[0]), chosen[1:]
+
+
+def reconstruct_full_path(order, pickup_points, route_data=None):
+    """
+    สร้างเส้นทางเดินทุกช่องจากลำดับการหยิบ
+
+    return: (path, steps, standing_cells)
+        path           = พิกัดทุกช่องตั้งแต่ Entrance ถึง Exit
+        steps          = จำนวนก้าวจริง = len(path) - 1
+        standing_cells = ช่องที่ยืนหยิบของแต่ละจุด เรียงตาม order
+    """
+
+    if route_data is None:
+        route_data = build_route_data(pickup_points)
+
+    _, standing_cells = evaluate_order(order, route_data)
+
+    chosen = [entrance] + standing_cells + [exit_point]
+
+    path = [entrance]
+
+    for a, b in zip(chosen, chosen[1:]):
+        _, segment = bfs(a, b)
+        path.extend(segment[1:])
+
+    return path, len(path) - 1, standing_cells
+
+
+# =========================================================
+# 12) คำนวณ Distance จาก Pickup Order
 # =========================================================
 
 def calculate_order_distance(
@@ -450,7 +591,7 @@ def calculate_order_distance(
 
 
 # =========================================================
-# 11) Print Distance Matrix
+# 13) Print Distance Matrix
 # =========================================================
 
 def print_distance_matrix(
